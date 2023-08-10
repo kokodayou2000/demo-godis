@@ -32,7 +32,7 @@ type EchoHandler struct {
 	closing    atomic.Boolean // closing state
 }
 
-func NewHandler() *EchoHandler {
+func MakeHandler() *EchoHandler {
 	// 使用 sync.Map和atomic.Boolean的默认初始值就好
 	return &EchoHandler{}
 }
