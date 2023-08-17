@@ -1,7 +1,12 @@
 package tcp
 
+/**
+ * A tcp handler
+ */
+
 import (
 	"context"
+	"fmt"
 	"go-redis/interface/tcp"
 	"go-redis/lib/logger"
 	"net"
@@ -9,69 +14,62 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
+// Config stores tcp handler properties
 type Config struct {
-	Address string
+	Address    string        `yaml:"address"`
+	MaxConnect uint32        `yaml:"max-connect"`
+	Timeout    time.Duration `yaml:"timeout"`
 }
 
-func ListenAndServeWithSignal(cfg *Config,
-	handler tcp.Handler) error {
-	// ctl connect
+// ListenAndServeWithSignal binds port and handle requests, blocking until receive stop signal
+func ListenAndServeWithSignal(cfg *Config, handler tcp.Handler) error {
 	closeChan := make(chan struct{})
-
-	sigChan := make(chan os.Signal)
-	// go runtime will detect this ... signal
-	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL)
+	sigCh := make(chan os.Signal)
+	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		// 监听系统信号
-		sig := <-sigChan
+		sig := <-sigCh
 		switch sig {
-		case syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL:
+		case syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
 			closeChan <- struct{}{}
 		}
 	}()
-	// listen address
 	listener, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		return err
 	}
-	logger.Info("start listen " + cfg.Address + " ...")
+	logger.Info(fmt.Sprintf("bind: %s, start listening...", cfg.Address))
 	ListenAndServe(listener, handler, closeChan)
 	return nil
 }
 
-func ListenAndServe(
-	listener net.Listener,
-	handler tcp.Handler,
-	closeChan <-chan struct{}) {
-	// when kill process
+// ListenAndServe binds port and handle requests, blocking until close
+func ListenAndServe(listener net.Listener, handler tcp.Handler, closeChan <-chan struct{}) {
+	// listen signal
 	go func() {
 		<-closeChan
-		logger.Info("shutting down")
-		_ = listener.Close()
-		_ = handler.Close()
-
+		logger.Info("shutting down...")
+		_ = listener.Close() // listener.Accept() will return err immediately
+		_ = handler.Close()  // close connections
 	}()
 
+	// listen port
 	defer func() {
+		// close during unexpected error
 		_ = listener.Close()
 		_ = handler.Close()
 	}()
-	// 根据background create context
 	ctx := context.Background()
-	// 每连接一个godis客户端，都会让wg+1,当死循环出现异常的时候
-	// 等待所有服务的客户做完工作后退出
 	var waitDone sync.WaitGroup
-	for true {
+	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			// 接收新连接出现了问题
-			logger.Error("Connection error ", err)
 			break
 		}
-		logger.Info("accept new like")
-		// 新增等待
+		// handle
+		logger.Info("accept link")
 		waitDone.Add(1)
 		go func() {
 			defer func() {
@@ -80,6 +78,5 @@ func ListenAndServe(
 			handler.Handle(ctx, conn)
 		}()
 	}
-	// 等待协程结束
 	waitDone.Wait()
 }

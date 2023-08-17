@@ -1,8 +1,26 @@
 package resp
 
-// Connection 代表redis协议层的连接
+// Connection represents a connection with redis client
 type Connection interface {
-	Write([]byte) (int, error)
-	GetDBIndex() int   // default 16 DB
-	SelectDBIndex(int) // will change db connection
+	Write([]byte) error
+	SetPassword(string)
+	GetPassword() string
+
+	// client should keep its subscribing channels
+	Subscribe(channel string)
+	UnSubscribe(channel string)
+	SubsCount() int
+	GetChannels() []string
+
+	// used for `Multi` command
+	InMultiState() bool
+	SetMultiState(bool)
+	GetQueuedCmdLine() [][][]byte
+	EnqueueCmd([][]byte)
+	ClearQueuedCmds()
+	GetWatching() map[string]uint32
+
+	// used for multi database
+	GetDBIndex() int
+	SelectDB(int)
 }

@@ -5,13 +5,12 @@ import (
 	"time"
 )
 
-// Wait  is similar with sync.WaitGroup
-// enhance timeout feature
+// Wait is similar with sync.WaitGroup which can wait with timeout
 type Wait struct {
 	wg sync.WaitGroup
 }
 
-// Add adds delta, which may be negative,to theWaitGroup counter
+// Add adds delta, which may be negative, to the WaitGroup counter.
 func (w *Wait) Add(delta int) {
 	w.wg.Add(delta)
 }
@@ -21,13 +20,13 @@ func (w *Wait) Done() {
 	w.wg.Done()
 }
 
-// Wait blocks until the WaitGroup counter is zero
+// Wait blocks until the WaitGroup counter is zero.
 func (w *Wait) Wait() {
 	w.wg.Wait()
 }
 
-// WaitWithTimeout blocks until the WaitGroup counter is zero
-// timeout return true if timeout
+// WaitWithTimeout blocks until the WaitGroup counter is zero or timeout
+// returns true if timeout
 func (w *Wait) WaitWithTimeout(timeout time.Duration) bool {
 	c := make(chan bool, 1)
 	go func() {
@@ -37,8 +36,8 @@ func (w *Wait) WaitWithTimeout(timeout time.Duration) bool {
 	}()
 	select {
 	case <-c:
-		return false
+		return false // completed normally
 	case <-time.After(timeout):
-		return true
+		return true // timed out
 	}
 }

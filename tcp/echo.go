@@ -1,5 +1,9 @@
 package tcp
 
+/**
+ * A echo handler to test whether the handler is functioning normally
+ */
+
 import (
 	"bufio"
 	"context"
@@ -12,78 +16,69 @@ import (
 	"time"
 )
 
-// EchoClient 客户端实体
+// EchoHandler echos received line to client, using for test
+type EchoHandler struct {
+	activeConn sync.Map
+	closing    atomic.Boolean
+}
+
+// MakeEchoHandler creates EchoHandler
+func MakeHandler() *EchoHandler {
+	return &EchoHandler{}
+}
+
+// EchoClient is client for EchoHandler, using for test
 type EchoClient struct {
 	Conn    net.Conn
 	Waiting wait.Wait
 }
 
-// Close 关闭客户端的逻辑
-func (e *EchoClient) Close() error {
-	// 等待10s，如果还未能断开连接就关闭
-	e.Waiting.WaitWithTimeout(10 * time.Second)
-	_ = e.Conn.Close()
+// Close close connection
+func (c *EchoClient) Close() error {
+	c.Waiting.WaitWithTimeout(10 * time.Second)
+	c.Conn.Close()
 	return nil
 }
 
-// EchoHandler  业务 接收客户端连接并服务，以及关闭
-type EchoHandler struct {
-	activeConn sync.Map
-	closing    atomic.Boolean // closing state
-}
-
-func MakeHandler() *EchoHandler {
-	// 使用 sync.Map和atomic.Boolean的默认初始值就好
-	return &EchoHandler{}
-}
-
-func (handler *EchoHandler) Handle(ctx context.Context, conn net.Conn) {
-	//我们的业务是否处于正在关闭的状态
-	if handler.closing.Get() {
+// Handle echos received line to client
+func (h *EchoHandler) Handle(ctx context.Context, conn net.Conn) {
+	if h.closing.Get() {
+		// closing handler refuse new connection
 		_ = conn.Close()
 	}
-	// create client
+
 	client := &EchoClient{
 		Conn: conn,
 	}
-	// 存储到sync.Map中
-	handler.activeConn.Store(client, struct{}{})
-	// 创建连接对应的buffer
+	h.activeConn.Store(client, struct{}{})
+
 	reader := bufio.NewReader(conn)
-	for true {
-		// 结束的标志
+	for {
+		// may occurs: client EOF, client timeout, handler early close
 		msg, err := reader.ReadString('\n')
 		if err != nil {
-			// 网络传输结束,客户端退出
 			if err == io.EOF {
-				logger.Info("Connecting Close...")
-				handler.activeConn.Delete(client)
+				logger.Info("connection close")
+				h.activeConn.Delete(client)
 			} else {
-				logger.Warn("Warn", err)
+				logger.Warn(err)
 			}
 			return
 		}
-		// 在wg中做一个记录，不要直接关闭我，等10s，或者等到Done之后
 		client.Waiting.Add(1)
 		b := []byte(msg)
-		// 写回去
 		_, _ = conn.Write(b)
-
-		// 业务结束
 		client.Waiting.Done()
 	}
 }
 
-func (handler *EchoHandler) Close() error {
-	logger.Info("handler shutting down")
-	// 进入关闭状态
-	handler.closing.Set(true)
-	// close all connection
-	handler.activeConn.Range(func(key, value any) bool {
-		// 转换成client类型
+// Close stops echo handler
+func (h *EchoHandler) Close() error {
+	logger.Info("handler shutting down...")
+	h.closing.Set(true)
+	h.activeConn.Range(func(key interface{}, val interface{}) bool {
 		client := key.(*EchoClient)
-		// Close
-		_ = client.Conn.Close()
+		_ = client.Close()
 		return true
 	})
 	return nil

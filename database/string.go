@@ -3,72 +3,89 @@ package database
 import (
 	"go-redis/interface/database"
 	"go-redis/interface/resp"
+	"go-redis/lib/utils"
 	"go-redis/resp/reply"
 )
 
-func init() {
-	RegisterCommand("get", execGet, 2)
-	RegisterCommand("set", execSet, 3)
-	RegisterCommand("setNX", execSetNX, 3)
-	RegisterCommand("getSet", execGetSet, 3)
-	RegisterCommand("strlen", execStrLen, 2)
-}
-
-// Get
-func execGet(db *DB, args [][]byte) resp.Reply {
-	key := string(args[0])
-	entity, exist := db.GetEntity(key)
-	if !exist {
-		return reply.MakeNullBulkReply()
+func (db *DB) getAsString(key string) ([]byte, reply.ErrorReply) {
+	entity, ok := db.GetEntity(key)
+	if !ok {
+		return nil, nil
 	}
 	bytes, ok := entity.Data.([]byte)
-	if ok {
-		return reply.MakeBulkReply(bytes)
+	if !ok {
+		return nil, &reply.WrongTypeErrReply{}
 	}
-	return reply.MakeErrReply("It doesn't string type")
+	return bytes, nil
 }
 
-// Set k1 v1
+// execGet returns string value bound to the given key
+func execGet(db *DB, args [][]byte) resp.Reply {
+	key := string(args[0])
+	bytes, err := db.getAsString(key)
+	if err != nil {
+		return err
+	}
+	if bytes == nil {
+		return &reply.NullBulkReply{}
+	}
+	return reply.MakeBulkReply(bytes)
+}
+
+// execSet sets string value and time to live to the given key
 func execSet(db *DB, args [][]byte) resp.Reply {
 	key := string(args[0])
-	value := string(args[1])
-	// 为什么要使用 DataEntity ?
-	entity := &database.DataEntity{Data: value}
+	value := args[1]
+	entity := &database.DataEntity{
+		Data: value,
+	}
 	db.PutEntity(key, entity)
-	return reply.MakeOKReply()
+	db.addAof(utils.ToCmdLine2("set", args...))
+	return &reply.OkReply{}
 }
 
-// SetNX k1 v1 if k1 exist ,return 0
+// execSetNX sets string if not exists
 func execSetNX(db *DB, args [][]byte) resp.Reply {
 	key := string(args[0])
-	value := string(args[1])
-	// 为什么要使用 DataEntity ?
-	entity := &database.DataEntity{Data: value}
+	value := args[1]
+	entity := &database.DataEntity{
+		Data: value,
+	}
 	result := db.PutIfAbsent(key, entity)
+	db.addAof(utils.ToCmdLine2("setnx", args...))
 	return reply.MakeIntReply(int64(result))
 }
 
-// GetSet k1 v1 返回k1 原来的值，然后k1重新赋值
+// execGetSet sets value of a string-type key and returns its old value
 func execGetSet(db *DB, args [][]byte) resp.Reply {
 	key := string(args[0])
-	value := string(args[1])
-	oldEntity, exists := db.GetEntity(key)
-	// 为什么要使用 DataEntity ?
-	entity := &database.DataEntity{Data: value}
-	_ = db.PutEntity(key, entity)
+	value := args[1]
+
+	entity, exists := db.GetEntity(key)
+	db.PutEntity(key, &database.DataEntity{Data: value})
 	if !exists {
 		return reply.MakeNullBulkReply()
 	}
-	return reply.MakeBulkReply(oldEntity.Data.([]byte))
+	old := entity.Data.([]byte)
+	db.addAof(utils.ToCmdLine2("getset", args...))
+	return reply.MakeBulkReply(old)
 }
 
-// strlen
+// execStrLen returns len of string value bound to the given key
 func execStrLen(db *DB, args [][]byte) resp.Reply {
 	key := string(args[0])
 	entity, exists := db.GetEntity(key)
 	if !exists {
 		return reply.MakeNullBulkReply()
 	}
-	bytes := entity.Data.([]byte)
-	return reply.MakeIntReply(int64(len(bytes)))
+	old := entity.Data.([]byte)
+	return reply.MakeIntReply(int64(len(old)))
+}
+
+func init() {
+	RegisterCommand("Get", execGet, 2)
+	RegisterCommand("Set", execSet, -3)
+	RegisterCommand("SetNx", execSetNX, 3)
+	RegisterCommand("GetSet", execGetSet, 3)
+	RegisterCommand("StrLen", execStrLen, 2)
 }

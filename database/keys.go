@@ -1,34 +1,27 @@
 package database
 
 import (
-	"container/list"
 	"go-redis/interface/resp"
+	"go-redis/lib/utils"
 	"go-redis/lib/wildcard"
 	"go-redis/resp/reply"
 )
 
-func init() {
-	RegisterCommand("del", execDel, -2)          // del k1 k2 k3
-	RegisterCommand("exists", execExists, -2)    // exists k1 k2 k3
-	RegisterCommand("flushDB", execFlushDB, -1)  // flushDB  使用 -1 不会后面的数进行纠错 用户输入 flushDB a b c 也不报错
-	RegisterCommand("type", execType, 2)         // type k1
-	RegisterCommand("rename", execRename, 3)     // rename k1 k2
-	RegisterCommand("renameNX", execRenameNX, 3) // renameNX k1 k2
-	RegisterCommand("keys", execKeys, 2)         // keys *
-
-}
-
-// DEL
+// execDel removes a key from db
 func execDel(db *DB, args [][]byte) resp.Reply {
 	keys := make([]string, len(args))
 	for i, v := range args {
 		keys[i] = string(v)
 	}
 	deleted := db.Removes(keys...)
+	if deleted == 1 {
+		// 记录的时候 需要将 字符串del 和 二维bytes 参数组装成一个
+		db.addAof(utils.ToCmdLine2("del", args...))
+	}
 	return reply.MakeIntReply(int64(deleted))
 }
 
-// EXISTS 检测key是否存在
+// execExists checks if a is existed in db
 func execExists(db *DB, args [][]byte) resp.Reply {
 	result := int64(0)
 	for _, arg := range args {
@@ -41,13 +34,14 @@ func execExists(db *DB, args [][]byte) resp.Reply {
 	return reply.MakeIntReply(result)
 }
 
-// FlushDB
+// execFlushDB removes all data in current db
 func execFlushDB(db *DB, args [][]byte) resp.Reply {
 	db.Flush()
-	return reply.MakeOKReply()
+	db.addAof(utils.ToCmdLine2("flushdb", args...))
+	return &reply.OkReply{}
 }
 
-// TYPE
+// execType returns the type of entity, including: string, list, hash, set and zset
 func execType(db *DB, args [][]byte) resp.Reply {
 	key := string(args[0])
 	entity, exists := db.GetEntity(key)
@@ -57,56 +51,67 @@ func execType(db *DB, args [][]byte) resp.Reply {
 	switch entity.Data.(type) {
 	case []byte:
 		return reply.MakeStatusReply("string")
-	case list.List:
-		return reply.MakeStatusReply("list")
 	}
-	return &reply.UnKnowErrReply{}
+	return &reply.UnknownErrReply{}
 }
 
-// Rename k1 k2
+// execRename a key
 func execRename(db *DB, args [][]byte) resp.Reply {
+	if len(args) != 2 {
+		return reply.MakeErrReply("ERR wrong number of arguments for 'rename' command")
+	}
 	src := string(args[0])
 	dest := string(args[1])
-	entity, exist := db.GetEntity(src)
-	if !exist {
+
+	entity, ok := db.GetEntity(src)
+	if !ok {
 		return reply.MakeErrReply("no such key")
 	}
 	db.PutEntity(dest, entity)
 	db.Remove(src)
-	return reply.MakeOKReply()
+	db.addAof(utils.ToCmdLine2("rename", args...))
+	return &reply.OkReply{}
 }
 
-// RenameNX
-// 返回值和rename不同，rename会返回ok，但是renameNX未进行操作返回0，进行操作返回1
-func execRenameNX(db *DB, args [][]byte) resp.Reply {
+// execRenameNx a key, only if the new key does not exist
+func execRenameNx(db *DB, args [][]byte) resp.Reply {
 	src := string(args[0])
 	dest := string(args[1])
-	_, exist := db.GetEntity(dest)
-	if exist {
-		// redis 中如果没有进行操作，就返回 0
+
+	_, ok := db.GetEntity(dest)
+	if ok {
 		return reply.MakeIntReply(0)
 	}
 
-	entity, exist := db.GetEntity(src)
-	if !exist {
+	entity, ok := db.GetEntity(src)
+	if !ok {
 		return reply.MakeErrReply("no such key")
 	}
+	db.Removes(src, dest) // clean src and dest with their ttl
 	db.PutEntity(dest, entity)
-	db.Remove(src)
+	db.addAof(utils.ToCmdLine2("renamenx", args...))
 	return reply.MakeIntReply(1)
 }
 
-// KEYS * redis 通配符算法
+// execKeys returns all keys matching the given pattern
 func execKeys(db *DB, args [][]byte) resp.Reply {
-	// 根据 参数获取对应的 regex
-	pattern, _ := wildcard.CompilePattern(string(args[0]))
+	pattern := wildcard.CompilePattern(string(args[0]))
 	result := make([][]byte, 0)
 	db.data.ForEach(func(key string, val interface{}) bool {
-		// 根据regex 匹配key，判断是否能匹配成功
 		if pattern.IsMatch(key) {
 			result = append(result, []byte(key))
 		}
 		return true
 	})
 	return reply.MakeMultiBulkReply(result)
+}
+
+func init() {
+	RegisterCommand("Del", execDel, -2)
+	RegisterCommand("Exists", execExists, -2)
+	RegisterCommand("Keys", execKeys, 2)
+	RegisterCommand("FlushDB", execFlushDB, -1)
+	RegisterCommand("Type", execType, 2)
+	RegisterCommand("Rename", execRename, 3)
+	RegisterCommand("RenameNx", execRenameNx, 3)
 }
