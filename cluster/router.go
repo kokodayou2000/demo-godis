@@ -11,6 +11,13 @@ func makeRouter() map[string]CmdFunc {
 	routerMap["setnx"] = defaultFunc
 	routerMap["get"] = defaultFunc
 	routerMap["getset"] = defaultFunc
+	routerMap["ping"] = Ping
+	routerMap["rename"] = Rename
+	routerMap["renamenx"] = Rename
+	routerMap["FlushDB"] = FlushDB
+	routerMap["Del"] = Del
+	routerMap["select"] = ExecSelect
+
 	return routerMap
 }
 
