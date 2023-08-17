@@ -12,15 +12,15 @@ import (
 	"strings"
 )
 
-// Database is a set of multiple database set
-type Database struct {
+// StandaloneDatabase is a set of multiple database set
+type StandaloneDatabase struct {
 	dbSet      []*DB
 	aofHandler *aof.AofHandler
 }
 
-// NewDatabase creates a redis database,
-func NewDatabase() *Database {
-	mdb := &Database{}
+// NewStandaloneDatabase creates a redis database,
+func NewStandaloneDatabase() *StandaloneDatabase {
+	mdb := &StandaloneDatabase{}
 	if config.Properties.Databases == 0 {
 		config.Properties.Databases = 16
 	}
@@ -38,9 +38,11 @@ func NewDatabase() *Database {
 		}
 		mdb.aofHandler = handler
 		for _, db := range mdb.dbSet {
+			tIndex := db.index
+			// 这里出现了闭包问题
 			db.addAof = func(line CmdLine) {
 				// 初始化 子数据库的  addAof方法
-				mdb.aofHandler.AddAof(db.index, line)
+				mdb.aofHandler.AddAof(tIndex, line)
 			}
 		}
 	}
@@ -49,7 +51,7 @@ func NewDatabase() *Database {
 
 // Exec executes command
 // parameter `cmdLine` contains command and its arguments, for example: "set key value"
-func (mdb *Database) Exec(c resp.Connection, cmdLine [][]byte) (result resp.Reply) {
+func (mdb *StandaloneDatabase) Exec(c resp.Connection, cmdLine [][]byte) (result resp.Reply) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Warn(fmt.Sprintf("error occurs: %v\n%s", err, string(debug.Stack())))
@@ -70,14 +72,14 @@ func (mdb *Database) Exec(c resp.Connection, cmdLine [][]byte) (result resp.Repl
 }
 
 // Close graceful shutdown database
-func (mdb *Database) Close() {
+func (mdb *StandaloneDatabase) Close() {
 
 }
 
-func (mdb *Database) AfterClientClose(c resp.Connection) {
+func (mdb *StandaloneDatabase) AfterClientClose(c resp.Connection) {
 }
 
-func execSelect(c resp.Connection, mdb *Database, args [][]byte) resp.Reply {
+func execSelect(c resp.Connection, mdb *StandaloneDatabase, args [][]byte) resp.Reply {
 	dbIndex, err := strconv.Atoi(string(args[0]))
 	if err != nil {
 		return reply.MakeErrReply("ERR invalid DB index")

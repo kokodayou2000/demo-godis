@@ -5,7 +5,10 @@ import (
 	"go-redis/interface/database"
 	"go-redis/lib/logger"
 	"go-redis/lib/utils"
+	"go-redis/resp/connection"
+	"go-redis/resp/parser"
 	"go-redis/resp/reply"
+	"io"
 	"os"
 	"strconv"
 )
@@ -91,5 +94,44 @@ func (handler *AofHandler) handlerAof() {
 
 // LoadAof 读盘
 func (handler *AofHandler) LoadAof() {
-
+	file, err := os.Open(handler.aofFilename)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+	defer func() {
+		err := file.Close()
+		if err != nil {
+			return
+		}
+	}()
+	// 为了记录db index
+	fakeConn := &connection.Connection{}
+	// 将文件当成输入流，通过parse来解析
+	ch := parser.ParseStream(file)
+	for p := range ch {
+		if p.Err != nil {
+			// 如果读到文件结束符
+			if p.Err == io.EOF {
+				break
+			}
+			// 读取到的这一行指令有问题，打印异常，并继续
+			logger.Error("aof文件读取异常" + p.Err.Error())
+			continue
+		}
+		if p.Data == nil {
+			// 读取到的这一行指令有问题，打印异常，并继续
+			logger.Error("读取空指令" + p.Err.Error())
+			continue
+		}
+		r, ok := p.Data.(*reply.MultiBulkReply)
+		if !ok {
+			logger.Error("读取的命令不是 multiBulkReply格式的")
+		}
+		rep := handler.database.Exec(fakeConn, r.Args)
+		// 判断是否是错误的响应
+		if reply.IsErrorReply(rep) {
+			logger.Error(rep)
+		}
+	}
 }
