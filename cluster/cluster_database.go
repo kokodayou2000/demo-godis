@@ -8,6 +8,9 @@ import (
 	"go-redis/interface/database"
 	"go-redis/interface/resp"
 	"go-redis/lib/consistenthash"
+	"go-redis/lib/logger"
+	"go-redis/resp/reply"
+	"strings"
 )
 
 type ClusterDatabase struct {
@@ -39,7 +42,7 @@ func MakeClusterDatabase() *ClusterDatabase {
 	ctx := context.Background()
 	for _, peer := range config.Properties.Peers {
 		// 为每一个peer创建一个连接池
-		pool.NewObjectPoolWithDefaultConfig(ctx, &connectionFactory{Peer: peer})
+		cd.peerConnection[peer] = pool.NewObjectPoolWithDefaultConfig(ctx, &connectionFactory{Peer: peer})
 	}
 	cd.nodes = nodes
 	return cd
@@ -50,17 +53,28 @@ type CmdFunc func(cluster *ClusterDatabase, c resp.Connection, cmdArgs [][]byte)
 
 var router = makeRouter()
 
-func (cd *ClusterDatabase) Exec(client resp.Connection, args [][]byte) resp.Reply {
-	//TODO implement me
-	panic("implement me")
+// Exec 集群版本的执行 (result resp.Reply) 相当于在第一行创建了一个变量 result resp.Reply 语法糖
+func (cd *ClusterDatabase) Exec(client resp.Connection, args [][]byte) (result resp.Reply) {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Error(err)
+			result = &reply.UnknownErrReply{}
+		}
+	}()
+	cmdName := strings.ToLower(string(args[0]))
+	cmdFunc, ok := router[cmdName]
+	if !ok {
+		return reply.MakeErrReply("not supported cmd")
+	}
+	// 执行
+	result = cmdFunc(cd, client, args)
+	return
 }
 
-func (cd *ClusterDatabase) AfterClientClose(c resp.Connection) {
-	//TODO implement me
-	panic("implement me")
+func (cd *ClusterDatabase) AfterClientClose(conn resp.Connection) {
+	cd.db.AfterClientClose(conn)
 }
 
-func (d *ClusterDatabase) Close() {
-	//TODO implement me
-	panic("implement me")
+func (cd *ClusterDatabase) Close() {
+	cd.db.Close()
 }

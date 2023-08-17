@@ -6,6 +6,8 @@ package handler
 
 import (
 	"context"
+	"go-redis/cluster"
+	"go-redis/config"
 	database2 "go-redis/database"
 	"go-redis/interface/database"
 	"go-redis/lib/logger"
@@ -33,7 +35,14 @@ type RespHandler struct {
 // MakeHandler creates a RespHandler instance
 func MakeHandler() *RespHandler {
 	var db database.Database
-	db = database2.NewStandaloneDatabase()
+	// 判断是否为单机版的
+	if config.Properties.Self != "" && len(config.Properties.Peers) > 0 {
+		// 启动集群版本
+		// 但是也会启动单机版，只不过是在cluster 下一层
+		db = cluster.MakeClusterDatabase()
+	} else {
+		db = database2.NewStandaloneDatabase()
+	}
 	return &RespHandler{
 		db: db,
 	}
